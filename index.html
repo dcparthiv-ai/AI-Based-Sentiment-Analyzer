@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sentiment Analyzer Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<style>
+  :root {
+    --positive: #2ecc71;
+    --neutral: #95a5a6;
+    --negative: #e74c3c;
+    --bg: #0f172a;
+    --card: #1e293b;
+    --text: #e2e8f0;
+    --accent: #6366f1;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 2rem;
+  }
+  h1 { margin-top: 0; }
+  .badge {
+    display: inline-block;
+    background: var(--accent);
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    margin-left: 8px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-top: 1.5rem;
+  }
+  .card {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+  textarea {
+    width: 100%;
+    min-height: 100px;
+    background: #0f172a;
+    color: var(--text);
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 10px;
+    font-size: 0.95rem;
+    resize: vertical;
+  }
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-top: 10px;
+    font-size: 0.95rem;
+  }
+  button:hover { background: #4f46e5; }
+  #result {
+    margin-top: 1rem;
+    padding: 10px;
+    border-radius: 8px;
+    font-weight: bold;
+  }
+  .pos { background: rgba(46,204,113,0.15); color: var(--positive); }
+  .neu { background: rgba(149,165,166,0.15); color: var(--neutral); }
+  .neg { background: rgba(231,76,60,0.15); color: var(--negative); }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: 0.85rem; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #334155; }
+  th { color: #94a3b8; }
+  .stat-row { display: flex; gap: 1.5rem; margin-bottom: 1rem; }
+  .stat { flex: 1; background: #0f172a; border-radius: 8px; padding: 12px; text-align: center; }
+  .stat .num { font-size: 1.6rem; font-weight: bold; }
+  .full-width { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+
+<h1>AI Sentiment Analyzer <span class="badge" id="dbBadge">{{ db_backend }}</span></h1>
+
+<div class="grid">
+  <div class="card">
+    <h2>Analyze Text</h2>
+    <textarea id="textInput" placeholder="Paste a review or social media post..."></textarea>
+    <br>
+    <button onclick="analyzeText()">Analyze Sentiment</button>
+    <div id="result"></div>
+  </div>
+
+  <div class="card">
+    <h2>Sentiment Distribution</h2>
+    <canvas id="pieChart" height="220"></canvas>
+  </div>
+
+  <div class="card full-width">
+    <div class="stat-row">
+      <div class="stat"><div class="num" id="totalCount">0</div>Total Analyzed</div>
+      <div class="stat"><div class="num" id="avgConfidence">0%</div>Avg. Confidence</div>
+      <div class="stat"><div class="num" id="posCount">0</div>Positive</div>
+      <div class="stat"><div class="num" id="negCount">0</div>Negative</div>
+    </div>
+    <canvas id="barChart" height="80"></canvas>
+  </div>
+
+  <div class="card full-width">
+    <h2>Recent Reviews</h2>
+    <table id="reviewsTable">
+      <thead><tr><th>Text</th><th>Label</th><th>Score</th><th>Source</th><th>Time</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let pieChart, barChart;
+
+function labelClass(label) {
+  return label === "positive" ? "pos" : label === "negative" ? "neg" : "neu";
+}
+
+async function analyzeText() {
+  const text = document.getElementById("textInput").value.trim();
+  const resultDiv = document.getElementById("result");
+  if (!text) { resultDiv.textContent = "Please enter some text."; return; }
+
+  resultDiv.textContent = "Analyzing...";
+  resultDiv.className = "";
+
+  try {
+    const res = await fetch("/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    resultDiv.className = labelClass(data.label);
+    resultDiv.textContent = `${data.label.toUpperCase()} (confidence: ${(data.score * 100).toFixed(1)}%)`;
+    document.getElementById("textInput").value = "";
+    await refreshDashboard();
+  } catch (err) {
+    resultDiv.className = "neg";
+    resultDiv.textContent = "Error: " + err.message;
+  }
+}
+
+async function refreshDashboard() {
+  const [reportsRes, reviewsRes] = await Promise.all([
+    fetch("/reports"), fetch("/reviews?limit=15")
+  ]);
+  const reports = await reportsRes.json();
+  const reviews = await reviewsRes.json();
+
+  document.getElementById("totalCount").textContent = reports.total;
+  document.getElementById("avgConfidence").textContent = (reports.average_confidence * 100).toFixed(1) + "%";
+  document.getElementById("posCount").textContent = reports.counts.positive;
+  document.getElementById("negCount").textContent = reports.counts.negative;
+
+  const labels = ["positive", "neutral", "negative"];
+  const values = labels.map(l => reports.counts[l] || 0);
+  const colors = ["#2ecc71", "#95a5a6", "#e74c3c"];
+
+  if (!pieChart) {
+    pieChart = new Chart(document.getElementById("pieChart"), {
+      type: "doughnut",
+      data: { labels, datasets: [{ data: values, backgroundColor: colors }] },
+      options: { plugins: { legend: { labels: { color: "#e2e8f0" } } } }
+    });
+    barChart = new Chart(document.getElementById("barChart"), {
+      type: "bar",
+      data: { labels, datasets: [{ label: "Count", data: values, backgroundColor: colors }] },
+      options: {
+        scales: {
+          x: { ticks: { color: "#e2e8f0" } },
+          y: { ticks: { color: "#e2e8f0" }, beginAtZero: true }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+  } else {
+    pieChart.data.datasets[0].data = values;
+    barChart.data.datasets[0].data = values;
+    pieChart.update();
+    barChart.update();
+  }
+
+  const tbody = document.querySelector("#reviewsTable tbody");
+  tbody.innerHTML = "";
+  reviews.forEach(r => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${(r.text || "").slice(0, 60)}</td>
+      <td class="${labelClass(r.label)}">${r.label}</td>
+      <td>${(r.score * 100).toFixed(1)}%</td>
+      <td>${r.source || ""}</td>
+      <td>${(r.timestamp || "").slice(0, 19).replace("T", " ")}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+refreshDashboard();
+</script>
+
+</body>
+</html>
